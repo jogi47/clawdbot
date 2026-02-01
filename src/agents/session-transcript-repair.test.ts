@@ -1,6 +1,9 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
-import { sanitizeToolUseResultPairing } from "./session-transcript-repair.js";
+import {
+  repairToolUseResultPairing,
+  sanitizeToolUseResultPairing,
+} from "./session-transcript-repair.js";
 
 describe("sanitizeToolUseResultPairing", () => {
   it("moves tool results directly after tool calls and inserts missing results", () => {
@@ -108,5 +111,92 @@ describe("sanitizeToolUseResultPairing", () => {
     const out = sanitizeToolUseResultPairing(input);
     expect(out.some((m) => m.role === "toolResult")).toBe(false);
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+});
+
+describe("repairToolUseResultPairing", () => {
+  it("tracks dropped orphan IDs in the report", () => {
+    const input = [
+      { role: "user", content: "hello" },
+      {
+        role: "toolResult",
+        toolCallId: "toolu_orphan_1",
+        toolName: "read",
+        content: [{ type: "text", text: "orphan 1" }],
+        isError: false,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "exec",
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "toolu_orphan_2",
+        toolName: "write",
+        content: [{ type: "text", text: "orphan 2" }],
+        isError: false,
+      },
+    ] as AgentMessage[];
+
+    const report = repairToolUseResultPairing(input);
+    expect(report.droppedOrphanCount).toBe(2);
+    expect(report.droppedOrphanIds).toContain("toolu_orphan_1");
+    expect(report.droppedOrphanIds).toContain("toolu_orphan_2");
+    expect(report.droppedOrphanIds).toHaveLength(2);
+  });
+
+  it("reports empty droppedOrphanIds when no orphans exist", () => {
+    const input = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "exec",
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+      },
+    ] as AgentMessage[];
+
+    const report = repairToolUseResultPairing(input);
+    expect(report.droppedOrphanCount).toBe(0);
+    expect(report.droppedOrphanIds).toEqual([]);
+  });
+
+  it("tracks orphan IDs from mismatched tool results within assistant spans", () => {
+    const input = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "exec",
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "toolu_wrong_id",
+        toolName: "read",
+        content: [{ type: "text", text: "wrong" }],
+        isError: false,
+      },
+      { role: "user", content: "next" },
+    ] as AgentMessage[];
+
+    const report = repairToolUseResultPairing(input);
+    expect(report.droppedOrphanCount).toBe(1);
+    expect(report.droppedOrphanIds).toContain("toolu_wrong_id");
   });
 });

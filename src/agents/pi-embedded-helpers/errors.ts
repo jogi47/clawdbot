@@ -621,3 +621,40 @@ export function isFailoverAssistantError(msg: AssistantMessage | undefined): boo
   }
   return isFailoverErrorMessage(msg.errorMessage ?? "");
 }
+
+// Orphan tool_result error detection
+const ORPHAN_TOOL_RESULT_PATTERNS = [
+  /unexpected tool_use_id found in tool_result/i,
+  /tool_result.*must have.*corresponding tool_use/i,
+  /tool_result.*references.*tool_use_id.*not found/i,
+];
+
+export function isOrphanToolResultError(errorMessage?: string): boolean {
+  if (!errorMessage) {
+    return false;
+  }
+  return ORPHAN_TOOL_RESULT_PATTERNS.some((p) => p.test(errorMessage));
+}
+
+const ORPHAN_TOOL_USE_ID_RE = /tool_use_id[:\s]*["']?(toolu_[a-zA-Z0-9_-]+)["']?/i;
+const ORPHAN_MESSAGE_PATH_RE = /messages\.(\d+)\.content\.(\d+)/i;
+
+export function parseOrphanToolResultError(errorMessage?: string): {
+  toolUseId: string;
+  messageIndex?: number;
+  contentIndex?: number;
+} | null {
+  if (!errorMessage || !isOrphanToolResultError(errorMessage)) {
+    return null;
+  }
+  const idMatch = errorMessage.match(ORPHAN_TOOL_USE_ID_RE);
+  if (!idMatch?.[1]) {
+    return null;
+  }
+  const pathMatch = errorMessage.match(ORPHAN_MESSAGE_PATH_RE);
+  return {
+    toolUseId: idMatch[1],
+    messageIndex: pathMatch?.[1] ? Number.parseInt(pathMatch[1], 10) : undefined,
+    contentIndex: pathMatch?.[2] ? Number.parseInt(pathMatch[2], 10) : undefined,
+  };
+}

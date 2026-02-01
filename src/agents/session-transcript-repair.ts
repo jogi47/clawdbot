@@ -75,6 +75,7 @@ export type ToolUseRepairReport = {
   added: Array<Extract<AgentMessage, { role: "toolResult" }>>;
   droppedDuplicateCount: number;
   droppedOrphanCount: number;
+  droppedOrphanIds: string[];
   moved: boolean;
 };
 
@@ -88,6 +89,7 @@ export function repairToolUseResultPairing(messages: AgentMessage[]): ToolUseRep
   const out: AgentMessage[] = [];
   const added: Array<Extract<AgentMessage, { role: "toolResult" }>> = [];
   const seenToolResultIds = new Set<string>();
+  const droppedOrphanIds: string[] = [];
   let droppedDuplicateCount = 0;
   let droppedOrphanCount = 0;
   let moved = false;
@@ -121,6 +123,10 @@ export function repairToolUseResultPairing(messages: AgentMessage[]): ToolUseRep
       if (role !== "toolResult") {
         out.push(msg);
       } else {
+        const orphanId = extractToolResultId(msg as Extract<AgentMessage, { role: "toolResult" }>);
+        if (orphanId) {
+          droppedOrphanIds.push(orphanId);
+        }
         droppedOrphanCount += 1;
         changed = true;
       }
@@ -172,6 +178,10 @@ export function repairToolUseResultPairing(messages: AgentMessage[]): ToolUseRep
       if (nextRole !== "toolResult") {
         remainder.push(next);
       } else {
+        const orphanId = extractToolResultId(next as Extract<AgentMessage, { role: "toolResult" }>);
+        if (orphanId) {
+          droppedOrphanIds.push(orphanId);
+        }
         droppedOrphanCount += 1;
         changed = true;
       }
@@ -215,6 +225,7 @@ export function repairToolUseResultPairing(messages: AgentMessage[]): ToolUseRep
     added,
     droppedDuplicateCount,
     droppedOrphanCount,
+    droppedOrphanIds,
     moved: changedOrMoved,
   };
 }

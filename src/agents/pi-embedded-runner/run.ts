@@ -36,8 +36,10 @@ import {
   isContextOverflowError,
   isFailoverAssistantError,
   isFailoverErrorMessage,
+  isOrphanToolResultError,
   parseImageSizeError,
   parseImageDimensionError,
+  parseOrphanToolResultError,
   isRateLimitAssistantError,
   isTimeoutErrorMessage,
   pickFallbackThinkingLevel,
@@ -304,6 +306,8 @@ export async function runEmbeddedPiAgent(
       }
 
       let overflowCompactionAttempted = false;
+      let orphanRepairAttempts = 0;
+      const MAX_ORPHAN_REPAIR_ATTEMPTS = 2;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
@@ -560,8 +564,31 @@ export async function runEmbeddedPiAgent(
             );
           }
 
+          // Handle orphan tool_result errors: these are auto-repaired by session transcript
+          // repair on each attempt, so we should simply retry without rotating profiles.
+          // Limit retries to avoid infinite loops if repair fails to fix the orphan.
+          const orphanToolResultError = isOrphanToolResultError(lastAssistant?.errorMessage ?? "");
+          if (
+            orphanToolResultError &&
+            !aborted &&
+            orphanRepairAttempts < MAX_ORPHAN_REPAIR_ATTEMPTS
+          ) {
+            orphanRepairAttempts += 1;
+            const parsed = parseOrphanToolResultError(lastAssistant?.errorMessage ?? "");
+            log.warn(
+              `Orphan tool_result detected (tool_use_id=${parsed?.toolUseId ?? "unknown"}). ` +
+                `Session repair will clean on retry. Attempt ${orphanRepairAttempts}/${MAX_ORPHAN_REPAIR_ATTEMPTS}...`,
+            );
+            continue;
+          }
+
           // Treat timeout as potential rate limit (Antigravity hangs on rate limit)
-          const shouldRotate = (!aborted && failoverFailure) || timedOut;
+          // Exclude orphan errors from profile rotation since they're auto-repaired,
+          // but after max retries, treat as regular format error and allow rotation
+          const orphanRetryExhausted = orphanRepairAttempts >= MAX_ORPHAN_REPAIR_ATTEMPTS;
+          const shouldRotate =
+            (!aborted && failoverFailure && (!orphanToolResultError || orphanRetryExhausted)) ||
+            timedOut;
 
           if (shouldRotate) {
             if (lastProfileId) {
